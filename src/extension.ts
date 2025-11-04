@@ -1,3 +1,4 @@
+import './polyfills';
 import * as vscode from 'vscode';
 import Log from './common/logger';
 import { RemoteSSHResolver, REMOTE_SSH_AUTHORITY } from './authResolver';
