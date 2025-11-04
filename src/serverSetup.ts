@@ -78,7 +78,7 @@ export async function installCodeServer(conn: SSHConnection, serverDownloadUrlTe
         release: vscodeServerConfig.release,
         extensionIds,
         envVariables,
-        useSocketPath,
+        useSocketPath: platform !== 'windows' && useSocketPath,
         serverApplicationName: vscodeServerConfig.serverApplicationName,
         serverDataFolderName: vscodeServerConfig.serverDataFolderName,
         serverDownloadUrlTemplate: serverDownloadUrlTemplate || vscodeServerConfig.serverDownloadUrlTemplate || DEFAULT_DOWNLOAD_URL_TEMPLATE,
@@ -400,8 +400,8 @@ else
 fi
 
 if [[ -f $SERVER_LOGFILE ]]; then
-    for i in {1..5}; do
-        LISTENING_ON="$(cat $SERVER_LOGFILE | grep -E 'Extension host agent listening on .+' | sed 's/Extension host agent listening on //')"
+    for i in {1..40}; do
+        LISTENING_ON="$(grep -E 'Extension host agent listening on .+' "$SERVER_LOGFILE" | sed 's/Extension host agent listening on //')"
         if [[ -n $LISTENING_ON ]]; then
             break
         fi
@@ -410,6 +410,7 @@ if [[ -f $SERVER_LOGFILE ]]; then
 
     if [[ -z $LISTENING_ON ]]; then
         echo "Error server did not start successfully"
+        tail -n 60 "$SERVER_LOGFILE" || true
         print_install_results_and_exit 1
     fi
 else
@@ -445,7 +446,8 @@ $DISTRO_VSCODIUM_RELEASE="${release ?? ''}"
 
 $SERVER_APP_NAME="${serverApplicationName}"
 $SERVER_INITIAL_EXTENSIONS="${extensions}"
-$SERVER_LISTEN_FLAG="${useSocketPath ? `--socket-path="$TMP_DIR/vscode-server-sock-${crypto.randomUUID()}"` : '--port=0'}"
+$SOCKET_PATH = "$TMP_DIR/vscode-server-sock-${crypto.randomUUID()}"
+$SERVER_LISTEN_FLAG="${useSocketPath ? '--socket-path=$SOCKET_PATH' : '--port=0'}"
 $SERVER_DATA_DIR="$(Resolve-Path ~)\\${serverDataFolderName}"
 $SERVER_DIR="$SERVER_DATA_DIR\\bin\\$DISTRO_COMMIT"
 $SERVER_SCRIPT="$SERVER_DIR\\bin\\$SERVER_APP_NAME.cmd"
@@ -571,7 +573,7 @@ else {
 }
 
 if(Test-Path $SERVER_TOKENFILE) {
-    $SERVER_CONNECTION_TOKEN="$(cat $SERVER_TOKENFILE)"
+    $SERVER_CONNECTION_TOKEN="$(Get-Content $SERVER_TOKENFILE)"
 }
 else {
     "Error server token file not found $SERVER_TOKENFILE"
@@ -579,19 +581,17 @@ else {
     exit 0
 }
 
-sleep -Milliseconds 500
-
 $SELECT_ARGUMENTS = @{
     Path = $SERVER_LOGFILE
     Pattern = "Extension host agent listening on (\\d+)"
 }
 
-for($I = 1; $I -le 5; $I++) {
+for($I = 1; $I -le 40; $I++) {
     if(Test-Path $SERVER_LOGFILE) {
-        $GROUPS = (Select-String @SELECT_ARGUMENTS).Matches.Groups
+        $MATCHES = Select-String @SELECT_ARGUMENTS -ErrorAction SilentlyContinue
 
-        if($GROUPS) {
-            $LISTENING_ON = $GROUPS[1].Value
+        if($MATCHES) {
+            $LISTENING_ON = $MATCHES[-1].Matches.Groups[1].Value
             break
         }
     }
@@ -601,6 +601,17 @@ for($I = 1; $I -le 5; $I++) {
 
 if(!(Test-Path $SERVER_LOGFILE)) {
     "Error server log file not found $SERVER_LOGFILE"
+    printInstallResults 1
+    exit 0
+}
+
+if(-not $LISTENING_ON) {
+    "Error server did not start successfully"
+    try {
+        Get-Content -Path $SERVER_LOGFILE -Tail 60 | Out-String
+    } catch {
+        # ignore
+    }
     printInstallResults 1
     exit 0
 }
